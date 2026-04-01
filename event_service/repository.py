@@ -5,67 +5,61 @@ from datetime import datetime, timedelta
 
 
 class EventRepository:
+    # Explicit list of columns for robust data access
+    EVENT_COLUMNS = (
+        "event_id, trace_id, service_name, endpoint, status, retry_count, "
+        "max_retries, is_dead, timestamp, error_type, severity, severity_reason, "
+        "latency_ms, error_code, region, version"
+    )
 
     @staticmethod
     def get_all_events():
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM events")
+        cursor.execute(f"SELECT {EventRepository.EVENT_COLUMNS} FROM events")
         rows = cursor.fetchall()
 
         conn.close()
-        return rows
+        return [EventRepository.format_event(row) for row in rows]
 
     @staticmethod
     def insert_event(event: Event):
+        # --- Validation Layer ---
+        if not event.event_id or not event.service_name:
+            raise ValueError("Incomplete event data: event_id and service_name are required.")
+
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-        INSERT INTO events (
-            event_id, trace_id, service_name, endpoint,
-            status, retry_count, max_retries,
-            is_dead, timestamp, error_type, severity, severity_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cursor.execute(f"""
+        INSERT INTO events ({EventRepository.EVENT_COLUMNS})
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            event.event_id,
-            event.trace_id,
-            event.service_name,
-            event.endpoint,
-            event.status,
-            event.retry_count,
-            event.max_retries,
-            int(event.is_dead),
-            event.timestamp.isoformat(),
-            event.error_type,
-            event.severity,
-            event.severity_reason
+            event.event_id, event.trace_id, event.service_name, event.endpoint,
+            event.status, event.retry_count, event.max_retries, int(event.is_dead),
+            event.timestamp.isoformat(), event.error_type, event.severity,
+            event.severity_reason, event.latency_ms, event.error_code,
+            event.region, event.version
         ))
 
         conn.commit()
         conn.close()
-
-    from datetime import datetime, timedelta
-
 
     @staticmethod
     def get_events_in_time_range(start_time: datetime, end_time: datetime):
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-        SELECT * FROM events
+        cursor.execute(f"""
+        SELECT {EventRepository.EVENT_COLUMNS} FROM events
         WHERE timestamp BETWEEN ? AND ?
-        """, (
-            start_time.isoformat(),
-            end_time.isoformat()
-        ))
+        """, (start_time.isoformat(), end_time.isoformat()))
 
         rows = cursor.fetchall()
         conn.close()
 
-        return rows
+        return [EventRepository.format_event(row) for row in rows]
     
     @staticmethod
     def get_recent_fault_count(service_name: str, minutes: int = 10):
@@ -86,6 +80,11 @@ class EventRepository:
     
     @staticmethod
     def format_event(row):
+        """Map database row to a structured dictionary (Named Access)"""
+        # Safety check for unexpected row formats during development
+        if len(row) < 12:
+            return {}
+
         return {
             "event_id": row[0],
             "trace_id": row[1],
@@ -98,7 +97,12 @@ class EventRepository:
             "timestamp": row[8],
             "error_type": row[9],
             "severity": row[10],
-            "severity_reason": row[11] if len(row) > 11 else None
+            "severity_reason": row[11],
+            # Support for new production fields
+            "latency_ms": row[12] if len(row) > 12 else 0.0,
+            "error_code": row[13] if len(row) > 13 else 0,
+            "region": row[14] if len(row) > 14 else "unknown",
+            "version": row[15] if len(row) > 15 else "1.0.0"
         }
     
     @staticmethod
@@ -106,7 +110,7 @@ class EventRepository:
         conn = get_connection()
         cursor = conn.cursor()
 
-        query = "SELECT * FROM events WHERE 1=1"
+        query = f"SELECT {EventRepository.EVENT_COLUMNS} FROM events WHERE 1=1"
         params = []
 
         if service_name:
@@ -121,22 +125,22 @@ class EventRepository:
         rows = cursor.fetchall()
 
         conn.close()
-        return rows
+        return [EventRepository.format_event(row) for row in rows]
     
     @staticmethod
     def get_events_by_time_range(start_time, end_time):
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("""
-        SELECT * FROM events
+        cursor.execute(f"""
+        SELECT {EventRepository.EVENT_COLUMNS} FROM events
         WHERE timestamp BETWEEN ? AND ?
         """, (start_time, end_time))
 
         rows = cursor.fetchall()
         conn.close()
 
-        return rows
+        return [EventRepository.format_event(row) for row in rows]
     
     @staticmethod
     def get_severity_distribution():
@@ -152,12 +156,7 @@ class EventRepository:
         rows = cursor.fetchall()
         conn.close()
 
-        distribution = {
-            "LOW": 0,
-            "MEDIUM": 0,
-            "HIGH": 0,
-            "CRITICAL": 0
-        }
+        distribution = {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}
 
         for severity, count in rows:
             if severity in distribution:
@@ -194,4 +193,4 @@ class EventRepository:
                 "dead_events": dead_count
             }
 
-        return summary
+        return summary

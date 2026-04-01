@@ -30,17 +30,44 @@ def init_db():
 
         error_type TEXT,
         severity TEXT,
-        severity_reason TEXT
+        severity_reason TEXT,
+
+        latency_ms REAL DEFAULT 0.0,
+        error_code INTEGER DEFAULT 0,
+        region TEXT DEFAULT 'unknown',
+        version TEXT DEFAULT '1.0.0'
     )
     """)
 
-    # Migration for existing users
-    try:
-        cursor.execute("ALTER TABLE events ADD COLUMN severity_reason TEXT")
-    except:
-        pass
+    # --- Schema Migrations (Backward Compatibility) ---
+    columns_to_add = {
+        "severity_reason": "TEXT",
+        "latency_ms": "REAL DEFAULT 0.0",
+        "error_code": "INTEGER DEFAULT 0",
+        "region": "TEXT DEFAULT 'unknown'",
+        "version": "TEXT DEFAULT '1.0.0'"
+    }
 
-    # Snapshots Table for historical auditability
+    for col, definition in columns_to_add.items():
+        try:
+            cursor.execute(f"ALTER TABLE events ADD COLUMN {col} {definition}")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+
+    # --- Performance & Data Integrity: Database Indexing ---
+    # We use IF NOT EXISTS to prevent crashes on subsequent runs
+    
+    # 1. Index on service_name for fast lookups in drift windows
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_service ON events (service_name)")
+    
+    # 2. Index on timestamp for range queries in the Drift Engine
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events (timestamp)")
+    
+    # 3. Index on region for localized drift analysis optimization
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_region ON events (region)")
+
+    # 4. Snapshots Table for historical auditability
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +81,9 @@ def init_db():
         event_count INTEGER
     )
     """)
+    
+    # Also index snapshots for trend querying performance
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON snapshots (timestamp)")
 
     conn.commit()
     conn.close()

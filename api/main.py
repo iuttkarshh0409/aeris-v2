@@ -18,8 +18,8 @@ def background_auditor(interval_seconds=60):
     print(f"🕵️  AERIS Autonomous Auditor Started (Interval: {interval_seconds}s)")
     while True:
         try:
-            # We use a default 15m window for the snapshot analysis
-            DriftEngine.save_snapshot(window_minutes=15)
+            # Use a 10m recent vs 60m baseline window for the snapshot analysis
+            DriftEngine.save_snapshot(recent_min=10, baseline_min=60)
         except Exception as e:
             print(f"Auditor Error: {e}")
         time.sleep(interval_seconds)
@@ -65,42 +65,31 @@ def get_events(
     else:
         events = EventRepository.get_all_events()
 
-    formatted = [EventRepository.format_event(r) for r in events]
-    return {"events": formatted}
+    # Data is already formatted as dictionaries with named metrics by the Repository
+    return {"events": events}
 
 
 # 3. Drift Analysis
 @app.get("/drift")
-def get_drift(window_size: int = 10):
-    result = DriftEngine.analyze_drift(window_size)
+def get_drift(recent_min: int = 10, baseline_min: int = 60):
+    result = DriftEngine.analyze_drift(recent_min, baseline_min)
     return result
 
 @app.get("/drift/explain")
-def explain_drift(window_size: int = 10):
-    result = DriftEngine.explain_drift(window_size)
+def explain_drift(recent_min: int = 10, baseline_min: int = 60):
+    result = DriftEngine.explain_drift(recent_min, baseline_min)
     return result
 
 @app.post("/drift/snapshot")
-def capture_snapshot(window_size: int = 15):
-    result = DriftEngine.save_snapshot(window_size)
+def capture_snapshot(recent_min: int = 10, baseline_min: int = 60):
+    result = DriftEngine.save_snapshot(recent_min, baseline_min)
     return {"message": "Snapshot Captured", "result": result}
 
 @app.get("/drift/history")
 def get_snapshot_history(limit: int = 15):
-    rows = DriftEngine.get_snapshots(limit)
-    formatted = [
-        {
-            "id": r[0],
-            "timestamp": r[1],
-            "risk_level": r[2],
-            "confidence": r[3],
-            # Use raw column indexes based on snapshots table definition
-            "recent_metrics": {"avg_retry": r[4], "dead_ratio": r[6]},
-            "baseline_metrics": {"avg_retry": r[5], "dead_ratio": r[7]},
-            "event_count": r[8]
-        } for r in rows
-    ]
-    return {"drift_history": formatted}
+    # Data is returned as structured dictionaries by DriftEngine.get_snapshots
+    history = DriftEngine.get_snapshots(limit)
+    return {"drift_history": history}
 
 @app.get("/analytics/severity")
 def severity_distribution():
